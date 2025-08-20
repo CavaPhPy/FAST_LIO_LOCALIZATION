@@ -1,3 +1,11 @@
+# 适配说明
+
+本工程依照[NEXTE_Sentry_Nav](https://github.com/66Lau/NEXTE_Sentry_Nav/blob/main/README_CN.md)给出的修改示例，进行依赖软件升级的适配。不直接采用`NEXTE_Sentry_Nav`工程是因为不需要那么多模块，且为了保持我们项目依赖的相对独立。
+
+---
+---
+---
+
 # FAST-LIO-LOCALIZATION
 
 A simple localization framework that can re-localize in built maps based on [FAST-LIO](https://github.com/hku-mars/FAST_LIO). 
