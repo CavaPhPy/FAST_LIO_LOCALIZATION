@@ -3,7 +3,7 @@
 from __future__ import print_function, division, absolute_import
 
 import copy
-import thread
+import _thread
 import time
 
 import numpy as np
