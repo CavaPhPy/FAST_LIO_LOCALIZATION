@@ -314,7 +314,7 @@ Visualization Manager:
               Value: true
             Value: true
           Enabled: true
-          Keep: 500
+          Keep: 1
           Name: localization
           Position Tolerance: 0.10000000149011612
           Shape:
