@@ -457,7 +457,7 @@ Visualization Manager:
   Global Options:
     Background Color: 0; 0; 0
     Default Light: true
-    Fixed Frame: map
+    Fixed Frame: robot_foot_init
     Frame Rate: 20
   Name: root
   Tools:
