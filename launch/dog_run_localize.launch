@@ -1,5 +1,5 @@
 <launch>
-	<!-- Launch file for Livox MID360 LiDAR -->
+	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_localize.launch 修改 -->
 
 	<arg name="rviz" default="false" />
 	<arg name="use_sim_time" value="true"/>

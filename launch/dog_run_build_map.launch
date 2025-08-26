@@ -1,7 +1,7 @@
 <launch>
-	<!-- Launch file for Livox MID-360 LiDAR -->
+	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_build_map.launch 修改 -->
 
-	<arg name="rviz" default="true" />
+	<arg name="rviz" default="false" />
 	<arg name="use_sim_time" value="true"/>
 	<arg name="map" default="$(find fast_lio)/PCD/scans.pcd" />
 
