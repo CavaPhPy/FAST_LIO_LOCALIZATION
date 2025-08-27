@@ -1,7 +1,7 @@
 <launch>
 	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_localize.launch 修改 -->
 
-	<arg name="rviz" default="false" />
+	<arg name="rviz" default="true" />
 	<arg name="use_sim_time" value="true"/>
 	<arg name="map" default="$(find fast_lio)/PCD/scans.pcd" />
 
@@ -49,8 +49,8 @@
 	<node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_2" args="-0.10 -0.11 0 0 0 0 camera_init robot_foot_init" />
 	<!-- 发布一个雷达初始位置camera_init到map的静态映射 -->
 	<!-- <node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_3" args="0 0 0 0 0 0 map camera_init" /> -->
-	<!-- 将body投影到2dmap上 -->
-	<node pkg="slam_utils" type="trans_tf_2d" name="trans_tF_2d" />
+	<!-- 将body投影到2dmap上，延时启动，避免启动太快坐标系出现转换问题 -->
+	<node pkg="slam_utils" type="trans_tf_2d" name="trans_tF_2d" launch-prefix="bash -c 'sleep 2; $0 $@' "/>
 
 
 </launch>
