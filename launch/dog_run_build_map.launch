@@ -1,9 +1,11 @@
 <launch>
 	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_build_map.launch 修改 -->
 
-	<arg name="rviz" default="false" />
+	<arg name="rviz" default="true" />
 	<arg name="use_sim_time" value="true"/>
 	<arg name="map" default="$(find fast_lio)/PCD/scans.pcd" />
+	<!-- 添加地图名称参数 -->
+	<arg name="map_name" default="default_map" />
 
 	<!-- fast_lio -->
 	<rosparam command="load" file="$(find fast_lio)/config/mid360.yaml" />
@@ -14,6 +16,16 @@
 	<param name="filter_size_map" type="double" value="0.5" />
 	<param name="cube_side_length" type="double" value="1000" />
 	<param name="runtime_pos_log_enable" type="bool" value="0" />
+
+	<!-- 是否存储PCD地图 -->
+	<param name="pcd_save/pcd_save_en" value="true" />
+	<!-- 如果存储地图，多少帧保存一次，MID360默认10Hz，即1s获得10帧，-1为保存为一个文件（不推荐） -->
+	<param name="pcd_save/interval" value="50" />
+	<!-- 地图保存的基本路径 -->
+	<param name="map_base_path" value="$(find fast_lio)/PCD/" />
+	<!-- 地图名称（也就是存储地图的文件夹名称） -->
+	<param name="map_name" value="$(arg map_name)" />
+
 	<node pkg="fast_lio" type="fastlio_mapping" name="laserMapping" output="screen">
 		<!-- 是否融合rtk数据 -->
 		<param name="is_fuse_rtk" value="false" />
@@ -21,8 +33,6 @@
 		<param name="rtk_dop_threshold" value="5.0" />
 		<!-- 里程计坐标原点绑定的rtk信息存储 -->
 		<param name="map_origin_rtk_file_path" value="$(find fast_lio)/PCD/map_origin_rtk.yaml" />
-		<!-- 是否存储PCD地图 -->
-		<param name="pcd_save/pcd_save_en" value="true" />
 	</node>
 
 	<group if="$(arg rviz)">
