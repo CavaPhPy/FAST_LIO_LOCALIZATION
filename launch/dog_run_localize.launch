@@ -1,9 +1,9 @@
 <launch>
 	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_localize.launch 修改 -->
 
-	<arg name="rviz" default="true" />
+	<arg name="rviz" default="false" />
 	<arg name="use_sim_time" value="true"/>
-	<arg name="map" default="$(find fast_lio)/PCD/scans.pcd" />
+	<arg name="map" default="$(find fast_lio)/PCD/default_map/submap_1.pcd" />
 
 	<!-- fast_lio -->
 	<rosparam command="load" file="$(find fast_lio_localization)/config/mid360.yaml" />
@@ -33,7 +33,7 @@
 
 	<!-- load 2d map -->
 	<arg name="2dmap" default="scans.yaml" />
-	<node name = "map_server" pkg = "map_server" type = "map_server" args="$(find fast_lio)/PCD/scans.yaml /map:=prior_map"/>
+	<node name = "map_server" pkg = "map_server" type = "map_server" args="$(find fast_lio)/PCD/default_map/scans.yaml /map:=prior_map"/>
 
 	<!-- 
 	map：地图坐标

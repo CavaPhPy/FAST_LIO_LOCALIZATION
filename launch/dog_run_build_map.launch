@@ -1,7 +1,7 @@
 <launch>
 	<!-- Launch file for Livox MID360 LiDAR，基于 sentry_build_map.launch 修改 -->
 
-	<arg name="rviz" default="true" />
+	<arg name="rviz" default="false" />
 	<arg name="use_sim_time" value="true"/>
 	<arg name="map" default="$(find fast_lio)/PCD/scans.pcd" />
 	<!-- 添加地图名称参数 -->
@@ -20,7 +20,7 @@
 	<!-- 是否存储PCD地图 -->
 	<param name="pcd_save/pcd_save_en" value="true" />
 	<!-- 如果存储地图，多少帧保存一次，MID360默认10Hz，即1s获得10帧，-1为保存为一个文件（不推荐） -->
-	<param name="pcd_save/interval" value="50" />
+	<param name="pcd_save/interval" value="-1" />
 	<!-- 地图保存的基本路径 -->
 	<param name="map_base_path" value="$(find fast_lio)/PCD/" />
 	<!-- 地图名称（也就是存储地图的文件夹名称） -->
