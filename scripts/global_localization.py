@@ -2,6 +2,17 @@
 # coding=utf8
 from __future__ import print_function, division, absolute_import
 
+try:
+    from .utils.submap_manager import SubmapManager
+except ImportError:
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from utils.submap_manager import SubmapManager
+
+from slam_utils.msg import RTKData
+import rospkg
+
 import copy
 import _thread
 import time
@@ -22,6 +33,10 @@ T_map_to_odom = np.eye(4)
 cur_odom = None
 cur_scan = None
 
+# 融合子地图与RTK数据
+submap_manager = None
+latest_rtk_data = None
+current_submaps = []  # 记录当前加载的子地图
 
 def pose_to_mat(pose_msg):
     return np.matmul(
@@ -166,14 +181,153 @@ def voxel_down_sample(pcd, voxel_size):
     return pcd_down
 
 
-def initialize_global_map(pc_msg):
-    global global_map
+# def initialize_global_map(pc_msg):
+#     global global_map
 
+#     global_map = o3d.geometry.PointCloud()
+#     global_map.points = o3d.utility.Vector3dVector(msg_to_array(pc_msg)[:, :3])
+#     global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
+#     rospy.loginfo('Global map received.')
+
+# 融合RTK后初始化代码
+def initialize_global_map_with_rtk(rtk_lat, rtk_lon):
+    global global_map, submap_manager, current_submaps
+    
+    # 根据RTK位置获取候选子地图
+    candidates = submap_manager.get_candidate_submaps(rtk_lat, rtk_lon)
+    
+    if not candidates:
+        rospy.logwarn("No candidate submaps found for position: {}, {}".format(rtk_lat, rtk_lon))
+        return False
+
+    # 保存当前加载的子地图信息
+    current_submaps = candidates
+    
+    # 加载候选子地图并合并
     global_map = o3d.geometry.PointCloud()
-    global_map.points = o3d.utility.Vector3dVector(msg_to_array(pc_msg)[:, :3])
-    global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
-    rospy.loginfo('Global map received.')
+    for candidate in candidates:
+        pcd_file = os.path.join(submap_manager.map_directory, candidate.file_path)
+        if os.path.exists(pcd_file):
+            try:
+                submap = o3d.io.read_point_cloud(pcd_file)
+                global_map += submap
+                rospy.loginfo("Loaded submap: {}".format(pcd_file))
+            except Exception as e:
+                rospy.logwarn("Failed to load submap {}: {}".format(pcd_file, str(e)))
+        else:
+            rospy.logwarn("Submap file not found: {}".format(pcd_file))
+    
+    if len(global_map.points) > 0:
+        global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
+        rospy.loginfo('Global map initialized with {} submaps, total points: {}'.format(
+            len(candidates), len(global_map.points)))
+        # 发布当前使用的子地图点云
+        publish_current_submap_points()
+        return True
+    else:
+        rospy.logwarn('Failed to initialize global map')
+        return False
 
+# 发布当前使用的子地图点云
+def publish_current_submap_points():
+    global current_submaps, submap_manager, pub_global_map
+    
+    # 合并所有当前子地图点云
+    combined_map = o3d.geometry.PointCloud()
+    for submap_meta in current_submaps:
+        pcd_file = os.path.join(submap_manager.map_directory, submap_meta.file_path)
+        if os.path.exists(pcd_file):
+            try:
+                submap = o3d.io.read_point_cloud(pcd_file)
+                combined_map += submap
+            except Exception as e:
+                rospy.logwarn("Failed to load submap for publishing {}: {}".format(pcd_file, str(e)))
+    
+    if len(combined_map.points) > 0:
+        # 发布点云
+        header = rospy.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = 'map'
+        publish_point_cloud(pub_global_map, header, np.array(combined_map.points))
+        rospy.loginfo('Published current submap points, total points: {}'.format(len(combined_map.points)))
+
+# 添加RTK数据订阅（回调函数）
+def cb_rtk_data(rtk_msg):
+    global latest_rtk_data
+    latest_rtk_data = rtk_msg
+
+# 返回当前RTK数据
+def get_current_rtk_position():
+    global latest_rtk_data
+    if latest_rtk_data and (rospy.Time.now() - latest_rtk_data.header.stamp).to_sec() < 3.0:
+        return latest_rtk_data.latitude, latest_rtk_data.longitude
+    return None, None
+
+# 智能定位
+def smart_global_localization():
+    global global_map, cur_scan, cur_odom, T_map_to_odom, submap_manager
+    
+    # 获取当前RTK位置
+    current_lat, current_lon = get_current_rtk_position()
+    
+    if current_lat is None or current_lon is None:
+        rospy.logwarn("RTK data not available, using previous map")
+        # 使用现有地图进行定位
+        return global_localization(T_map_to_odom)
+    
+    # 获取候选子地图
+    candidates = submap_manager.get_candidate_submaps(current_lat, current_lon)
+
+    # 检查是否需要更新地图（当候选子地图与当前加载的子地图不同时）
+    if set([c.file_path for c in candidates]) != set([c.file_path for c in current_submaps]):
+        rospy.loginfo("Updating map with new submaps")
+        # 更新全局地图
+        if not initialize_global_map_with_rtk(current_lat, current_lon):
+            rospy.logwarn("Failed to update global map")
+            # 如果更新失败，继续使用现有地图进行定位
+            return global_localization(T_map_to_odom)
+        return True
+    
+    # 首先尝试候选子地图
+    rospy.loginfo("Trying candidate submaps: {}".format(len(candidates)))
+    if try_localization_with_submaps(candidates):
+        return True
+    
+    # 如果失败，尝试所有子地图
+    rospy.logwarn("Candidate submaps failed, trying all submaps")
+    all_submaps = submap_manager.submaps_metadata
+    return try_localization_with_submaps(all_submaps)
+
+def try_localization_with_submaps(submap_list):
+    global global_map
+    
+    for i, submap_meta in enumerate(submap_list):
+        try:
+            # 加载单个子地图
+            pcd_file = os.path.join(submap_manager.map_directory, submap_meta.file_path)
+            if os.path.exists(pcd_file):
+                temp_map = o3d.io.read_point_cloud(pcd_file)
+                temp_map = voxel_down_sample(temp_map, MAP_VOXEL_SIZE)
+                
+                # 临时设置为全局地图进行定位尝试
+                original_map = global_map
+                global_map = temp_map
+                
+                success = global_localization(T_map_to_odom)
+                
+                if success:
+                    rospy.loginfo("Localization succeeded with submap: {}".format(submap_meta.file_path))
+                    return True
+                else:
+                    # 恢复原地图
+                    global_map = original_map
+            else:
+                rospy.logwarn("Submap file not found: {}".format(pcd_file))
+                
+        except Exception as e:
+            rospy.logwarn("Failed to try submap {}: {}".format(submap_meta.file_path, str(e)))
+    
+    return False
 
 def cb_save_cur_odom(odom_msg):
     global cur_odom
@@ -204,7 +358,9 @@ def thread_localization():
         # 每隔一段时间进行全局定位
         rospy.sleep(1 / FREQ_LOCALIZATION)
         # TODO 由于这里Fast lio发布的scan是已经转换到odom系下了 所以每次全局定位的初始解就是上一次的map2odom 不需要再拿odom了
-        global_localization(T_map_to_odom)
+        # global_localization(T_map_to_odom)
+        # 使用智能定位流程
+        smart_global_localization()
 
 
 if __name__ == '__main__':
@@ -227,29 +383,70 @@ if __name__ == '__main__':
     rospy.init_node('fast_lio_localization')
     rospy.loginfo('Localization Node Inited...')
 
+    # 初始化SubmapManager
+    rospack = rospkg.RosPack()
+    try:
+        fast_lio_path = rospack.get_path('fast_lio')
+        default_map_base_path = os.path.join(fast_lio_path, 'PCD')
+    except rospkg.ResourceNotFound:
+        default_map_base_path = '/tmp/PCD'  # fallback路径
+    map_base_path = rospy.get_param('/map_base_path', default_map_base_path)
+    map_name = rospy.get_param('/map_name', 'default_map')
+    print("global_localization init params: ",map_base_path, map_name)
+    submap_manager = SubmapManager(map_base_path, map_name)
+
     # publisher
     pub_pc_in_map = rospy.Publisher('/cur_scan_in_map', PointCloud2, queue_size=1)
     pub_submap = rospy.Publisher('/submap', PointCloud2, queue_size=1)
     pub_map_to_odom = rospy.Publisher('/map_to_odom', Odometry, queue_size=1)
+     # 添加发布全局地图点云的publisher
+    pub_global_map = rospy.Publisher('/map', PointCloud2, queue_size=1)
 
     rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)
     rospy.Subscriber('/Odometry', Odometry, cb_save_cur_odom, queue_size=1)
+    # RTK订阅
+    rospy.Subscriber('/rtk_data', RTKData, cb_rtk_data, queue_size=1)
 
-    # 初始化全局地图
-    rospy.logwarn('Waiting for global map......')
-    initialize_global_map(rospy.wait_for_message('/map', PointCloud2))
+    # 初始化全局地图（现在取消全局地图方式的初始化）
+    # rospy.logwarn('Waiting for global map......')
+    # initialize_global_map(rospy.wait_for_message('/map', PointCloud2))
+
+    # 等待RTK数据并初始化地图 (设置超时)
+    rospy.logwarn('Waiting for RTK data to initialize global map...')
+    rtk_initialized = False
+    start_time = time.time()
+    timeout = 30.0  # 30秒超时
+    
+    while not rtk_initialized and not rospy.is_shutdown() and (time.time() - start_time) < timeout:
+        lat, lon = get_current_rtk_position()
+        if lat is not None and lon is not None:
+            if initialize_global_map_with_rtk(lat, lon):
+                rtk_initialized = True
+                break
+        rospy.sleep(0.1)
+        rospy.loginfo_throttle(5, "Waiting for RTK data...")
+
+    if not rtk_initialized:
+        rospy.logerr("Failed to initialize with RTK data within timeout")
+        exit(1)
 
     # 初始化
     while not initialized:
         rospy.logwarn('Waiting for initial pose....')
 
         # 等待初始位姿
-        pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
-        initial_pose = pose_to_mat(pose_msg)
-        if cur_scan:
-            initialized = global_localization(initial_pose)
-        else:
-            rospy.logwarn('First scan not received!!!!!')
+        try:
+            pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped, timeout=5.0)
+            initial_pose = pose_to_mat(pose_msg)
+            if cur_scan:
+                initialized = global_localization(initial_pose)
+            else:
+                rospy.logwarn('First scan not received!!!!!')
+        except rospy.ROSException:
+            rospy.logwarn('Timeout waiting for initial pose, trying automatic initialization...')
+            # 尝试自动初始化
+            if cur_scan:
+                initialized = global_localization(np.eye(4))
 
     rospy.loginfo('')
     rospy.loginfo('Initialize successfully!!!!!!')
