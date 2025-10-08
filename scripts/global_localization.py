@@ -473,9 +473,6 @@ if __name__ == '__main__':
         if lat is not None and lon is not None:
             if initialize_global_map_with_rtk(lat, lon):
                 rtk_initialized = True
-                # RTK初始化成功后，基于RTK坐标自动发送初始位姿
-                rospy.loginfo("RTK initialized, auto sending initial pose based on RTK coordinates...")
-                send_initial_pose_from_rtk()
                 break
         rospy.sleep(0.1)
         rospy.loginfo_throttle(5, "Waiting for RTK data...")
@@ -485,16 +482,27 @@ if __name__ == '__main__':
         exit(1)
 
     # 初始化
+    attempt_count = 0
+    max_attempts = 300  # 最大尝试次数，避免无限循环
     while not initialized:
-        rospy.logwarn('Waiting for initial pose....')
+        rospy.logwarn(f'Waiting for initial pose.... (Attempt {attempt_count + 1}/{max_attempts})')
+
+        # 每次循环都发送基于最新RTK数据的初始位姿
+        if send_initial_pose_from_rtk():
+            rospy.loginfo("Successfully sent initial pose based on RTK coordinates")
+        else:
+            rospy.logwarn("Failed to send initial pose from RTK, will retry")
 
         # 等待初始位姿
         pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
         initial_pose = pose_to_mat(pose_msg)
         if cur_scan:
             initialized = global_localization(initial_pose)
+            if not initialized:
+                attempt_count += 1
         else:
             rospy.logwarn('First scan not received!!!!!')
+            attempt_count += 1
 
     rospy.loginfo('')
     rospy.loginfo('Initialize successfully!!!!!!')
