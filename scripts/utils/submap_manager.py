@@ -112,7 +112,7 @@ class SubmapManager:
             return self.submaps_metadata
             
         # 转换当前RTK位置到地图坐标系
-        x, y = self._latlon_to_map_xy(
+        x, y = self.latlon_to_map_xy(
             current_lat, current_lon,
             self.origin_rtk['latitude'], 
             self.origin_rtk['longitude']
@@ -128,7 +128,8 @@ class SubmapManager:
         print(f"找到 {len(candidates)} 个候选子地图，位置: ({current_lat}, {current_lon}) -> ({x}, {y})")
         return candidates
     
-    def _latlon_to_map_xy(self, lat, lon, origin_lat, origin_lon):
+    @staticmethod
+    def latlon_to_map_xy(lat, lon, origin_lat, origin_lon):
         """经纬度到地图坐标的转换"""
         # 简化的转换，实际应使用更精确的投影转换
         EARTH_RADIUS = 6378137.0
@@ -147,5 +148,5 @@ class SubmapManager:
 
 if __name__ == '__main__':
     # 测试代码
-    manager = SubmapManager('/home/lky/catkin_ws/src/FAST_LIO/PCD/', 'default_map')
-    print(f"加载了 {len(manager.submaps_metadata)} 个子地图")
+    x, y = SubmapManager.latlon_to_map_xy(31.53481520,104.70077521,31.53484415,104.70077093)
+    print(x,y)

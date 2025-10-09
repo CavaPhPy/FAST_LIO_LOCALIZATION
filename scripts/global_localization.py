@@ -2,13 +2,9 @@
 # coding=utf8
 from __future__ import print_function, division, absolute_import
 
-try:
-    from .utils.submap_manager import SubmapManager
-except ImportError:
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from utils.submap_manager import SubmapManager
+import os
+from utils.submap_manager import SubmapManager
+from utils.rtk_converter import RTKConverter, ConvertRTKData
 
 from slam_utils.msg import RTKData
 import rospkg
@@ -362,77 +358,31 @@ def send_initial_pose_from_rtk():
     """
     基于RTK坐标计算并发送初始位姿，包括位置和姿态信息
     """
-    global submap_manager, latest_rtk_data
+    global submap_manager, rtk_converter
     
     # 获取当前RTK位置
     current_rtk_data = get_current_rtk_data()
     if current_rtk_data is None:
         rospy.logwarn("No current RTK data available")
         return False
-        
-    current_lat = current_rtk_data.latitude
-    current_lon = current_rtk_data.longitude
-    
+
     # 检查是否有原点RTK信息
     if not submap_manager.origin_rtk:
         rospy.logwarn("No origin RTK data available")
         return False
     
     try:
-        # 获取原点RTK位置
-        origin_lat = submap_manager.origin_rtk['latitude']
-        origin_lon = submap_manager.origin_rtk['longitude']
-        
-        # 使用submap_manager中的转换函数计算XY坐标
-        x, y = submap_manager._latlon_to_map_xy(
-            current_lat, current_lon, 
-            origin_lat, origin_lon
+        # 获取实时 RTK 数据
+        RTK_CURRENT_DATA = ConvertRTKData(
+            lat=current_rtk_data.latitude,
+            lon=current_rtk_data.longitude,
+            alt=current_rtk_data.altitude, 
+            hdg=current_rtk_data.heading,
+            pit=current_rtk_data.pitch, 
+            rol=-current_rtk_data.roll
         )
-        
-        # 获取Z坐标（相对于原点的高度差）
-        z = 0.0
-        if hasattr(latest_rtk_data, 'altitude') and 'altitude' in submap_manager.origin_rtk:
-            z = latest_rtk_data.altitude - submap_manager.origin_rtk['altitude']
-        
-        # 计算相对姿态
-        roll = 0.0
-        pitch = 0.0
-        yaw = 0.0
-        
-        # 如果RTK数据包含姿态信息，计算相对姿态
-        if ((hasattr(latest_rtk_data, 'roll') and 'roll' in submap_manager.origin_rtk) or
-            (hasattr(latest_rtk_data, 'pitch') and 'pitch' in submap_manager.origin_rtk) or
-            (hasattr(latest_rtk_data, 'heading') and 'heading' in submap_manager.origin_rtk)):
-            
-            # 分别处理roll
-            if hasattr(latest_rtk_data, 'roll') and 'roll' in submap_manager.origin_rtk:
-                current_roll = latest_rtk_data.roll
-                origin_roll = submap_manager.origin_rtk['roll']
-                roll = (current_roll - origin_roll) * np.pi / 180.0
-            else:
-                roll = 0.0
-            
-            # 分别处理pitch
-            if hasattr(latest_rtk_data, 'pitch') and 'pitch' in submap_manager.origin_rtk:
-                current_pitch = latest_rtk_data.pitch
-                origin_pitch = submap_manager.origin_rtk['pitch']
-                pitch = (current_pitch - origin_pitch) * np.pi / 180.0
-            else:
-                pitch = 0.0
-            
-            # 分别处理heading
-            if hasattr(latest_rtk_data, 'heading') and 'heading' in submap_manager.origin_rtk:
-                current_yaw = latest_rtk_data.heading  # RTK通常提供的是航向角
-                origin_yaw = submap_manager.origin_rtk['heading']
-                yaw = (current_yaw - origin_yaw) * np.pi / 180.0
-            else:
-                yaw = 0.0
-            
-            rospy.loginfo(f"RTK attitude - Current: r={getattr(latest_rtk_data, 'roll', 'N/A')}, p={getattr(latest_rtk_data, 'pitch', 'N/A')}, y={getattr(latest_rtk_data, 'heading', 'N/A')}")
-            rospy.loginfo(f"RTK attitude - Origin: r={submap_manager.origin_rtk.get('roll', 'N/A')}, p={submap_manager.origin_rtk.get('pitch', 'N/A')}, y={submap_manager.origin_rtk.get('heading', 'N/A')}")
-            rospy.loginfo(f"Relative attitude: r={roll:.2f}, p={pitch:.2f}, y={yaw:.2f}")
-        
-        # 发送初始位姿
+        # 6. 转换并获取最终的世界坐标位姿
+        x, y, z, roll, pitch, yaw = rtk_converter.convert_to_world_pose(RTK_CURRENT_DATA)
         send_initial_pose(x, y, z, roll, pitch, yaw)
         rospy.loginfo(f"Auto Sent initial pose based on RTK: pos=({x:.2f}, {y:.2f}, {z:.2f}), att=({roll:.2f}, {pitch:.2f}, {yaw:.2f})")
         return True
@@ -515,6 +465,31 @@ if __name__ == '__main__':
     # 初始化全局地图（现在取消全局地图方式的初始化）
     # rospy.logwarn('Waiting for global map......')
     # initialize_global_map(rospy.wait_for_message('/map', PointCloud2))
+
+
+    # 实例化转换器（注意这里面有个T_RTK_TO_BASELINK_OFFSET需要根据实际情况修改！！！）
+    global rtk_converter
+    rtk_converter = RTKConverter()
+
+    # 在上方SubmapManager初始化的时候，理论上origin_rtk就有值了。
+    map_origin_rtk = submap_manager.origin_rtk
+    if not map_origin_rtk:
+        rospy.logwarn("No origin RTK data available")
+        exit(1)
+
+    RTK_START_DATA = ConvertRTKData(
+        lat=map_origin_rtk['latitude'],
+        lon=map_origin_rtk['longitude'], 
+        alt=map_origin_rtk['altitude'], 
+        hdg=map_origin_rtk['heading'],
+        pit=map_origin_rtk['pitch'], 
+        rol=map_origin_rtk['roll']
+    )
+
+    # 初始化坐标系对齐
+    rtk_converter.initialize_alignment(RTK_START_DATA)
+    rospy.loginfo("转换器已初始化。地理坐标系已对齐到世界坐标系。")
+
 
     # 等待RTK数据并初始化地图 (设置超时)
     rospy.logwarn('Waiting for RTK data to initialize global map...')
