@@ -186,14 +186,14 @@ def voxel_down_sample(pcd, voxel_size):
 #     rospy.loginfo('Global map received.')
 
 # 融合RTK后初始化代码
-def initialize_global_map_with_rtk(rtk_lat, rtk_lon):
+def initialize_global_map_with_rtk(rtk_data):
     global global_map, submap_manager, current_submaps
     
     # 根据RTK位置获取候选子地图
-    candidates = submap_manager.get_candidate_submaps(rtk_lat, rtk_lon)
+    candidates = submap_manager.get_candidate_submaps(rtk_data)
     
     if not candidates:
-        rospy.logwarn("No candidate submaps found for position: {}, {}".format(rtk_lat, rtk_lon))
+        rospy.logwarn("No candidate submaps found for position: {}, {}".format(rtk_data.latitude, rtk_data.longitude))
         return False
 
     # 保存当前加载的子地图信息
@@ -264,17 +264,14 @@ def smart_global_localization():
         rospy.logwarn("No current RTK data available")
         return False
         
-    current_lat = current_rtk_data.latitude
-    current_lon = current_rtk_data.longitude
-    
     # 获取候选子地图
-    candidates = submap_manager.get_candidate_submaps(current_lat, current_lon)
+    candidates = submap_manager.get_candidate_submaps(current_rtk_data)
 
     # 检查是否需要更新地图（当候选子地图与当前加载的子地图不同时）
     if set([c.file_path for c in candidates]) != set([c.file_path for c in current_submaps]):
         rospy.loginfo("Updating map with new submaps")
         # 更新全局地图
-        if not initialize_global_map_with_rtk(current_lat, current_lon):
+        if not initialize_global_map_with_rtk(current_rtk_data):
             rospy.logwarn("Failed to update global map")
             # 如果更新失败，继续使用现有地图进行定位
             return global_localization(T_map_to_odom)
@@ -500,7 +497,7 @@ if __name__ == '__main__':
     while not rtk_initialized and not rospy.is_shutdown() and (time.time() - start_time) < timeout:
         rtk_data = get_current_rtk_data()
         if rtk_data is not None:
-            if initialize_global_map_with_rtk(rtk_data.latitude, rtk_data.longitude):
+            if initialize_global_map_with_rtk(rtk_data):
                 rtk_initialized = True
                 break
         rospy.sleep(0.1)

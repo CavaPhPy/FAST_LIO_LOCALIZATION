@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # coding=utf8
 from __future__ import print_function, division, absolute_import
+from utils.rtk_converter import RTKConverter, ConvertRTKData
 
 import os
 import yaml
@@ -100,23 +101,54 @@ class SubmapManager:
             if 'map_origin' in config:
                 self.origin_rtk = config['map_origin']
                 print(f"加载RTK原点: lat={self.origin_rtk['latitude']}, lon={self.origin_rtk['longitude']}")
+
+                self.rtk_converter = RTKConverter()
+                # 创建原点RTK数据对象
+                origin_rtk_data = ConvertRTKData(
+                    lat=self.origin_rtk['latitude'],
+                    lon=self.origin_rtk['longitude'],
+                    alt=self.origin_rtk['altitude'],
+                    hdg=self.origin_rtk['heading'],
+                    pit=self.origin_rtk['pitch'],
+                    rol=self.origin_rtk['roll'],
+                    world_map_pos=[
+                        self.origin_rtk['world_map']['position']['x'],
+                        self.origin_rtk['world_map']['position']['y'],
+                        self.origin_rtk['world_map']['position']['z']
+                    ] if 'world_map' in self.origin_rtk else None,
+                    world_map_quat=[
+                        self.origin_rtk['world_map']['orientation']['x'],
+                        self.origin_rtk['world_map']['orientation']['y'],
+                        self.origin_rtk['world_map']['orientation']['z'],
+                        self.origin_rtk['world_map']['orientation']['w']
+                    ] if 'world_map' in self.origin_rtk else None
+                )
+                
+                # 初始化转换器对齐
+                self.rtk_converter.initialize_alignment(origin_rtk_data)
             else:
                 print(f"RTK原点未在 {rtk_file_path} 中找到")
         except Exception as e:
             print(f"加载RTK原点失败 {rtk_file_path}: {e}")
     
-    def get_candidate_submaps(self, current_lat, current_lon):
+    def get_candidate_submaps(self, rtk_data):
         """根据当前位置获取候选子地图"""
         if not self.origin_rtk:
             print("没有RTK原点信息，返回所有子地图")
             return self.submaps_metadata
             
-        # 转换当前RTK位置到地图坐标系
-        x, y = self.latlon_to_map_xy(
-            current_lat, current_lon,
-            self.origin_rtk['latitude'], 
-            self.origin_rtk['longitude']
+        # 创建当前RTK数据对象
+        current_rtk_data = ConvertRTKData(
+            lat=rtk_data.latitude,
+            lon=rtk_data.longitude,
+            alt=rtk_data.altitude,
+            hdg=rtk_data.heading,
+            pit=rtk_data.pitch,
+            rol=rtk_data.roll
         )
+        
+        # 转换当前RTK位置到地图坐标系
+        x, y, z, roll, pitch, yaw = self.rtk_converter.convert_to_world_pose(current_rtk_data)
         
         # 根据AABB包围盒筛选候选子地图
         candidates = []
@@ -125,7 +157,7 @@ class SubmapManager:
                 metadata.aabb_min[1] <= y <= metadata.aabb_max[1]):
                 candidates.append(metadata)
         
-        print(f"找到 {len(candidates)} 个候选子地图，位置: ({current_lat}, {current_lon}) -> ({x}, {y})")
+        print(f"找到 {len(candidates)} 个候选子地图，位置: ({rtk_data.latitude}, {rtk_data.longitude}) -> ({x}, {y})")
         return candidates
     
     @staticmethod
