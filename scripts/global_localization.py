@@ -476,11 +476,22 @@ if __name__ == '__main__':
 
     RTK_START_DATA = ConvertRTKData(
         lat=map_origin_rtk['latitude'],
-        lon=map_origin_rtk['longitude'], 
-        alt=map_origin_rtk['altitude'], 
+        lon=map_origin_rtk['longitude'],
+        alt=map_origin_rtk['altitude'],
         hdg=map_origin_rtk['heading'],
-        pit=map_origin_rtk['pitch'], 
-        rol=map_origin_rtk['roll']
+        pit=map_origin_rtk['pitch'],
+        rol=map_origin_rtk['roll'],
+        world_map_pos=[
+            map_origin_rtk['world_map']['position']['x'],
+            map_origin_rtk['world_map']['position']['y'],
+            map_origin_rtk['world_map']['position']['z']
+        ] if 'world_map' in map_origin_rtk else None,
+        world_map_quat=[
+            map_origin_rtk['world_map']['orientation']['x'],
+            map_origin_rtk['world_map']['orientation']['y'],
+            map_origin_rtk['world_map']['orientation']['z'],
+            map_origin_rtk['world_map']['orientation']['w']
+        ] if 'world_map' in map_origin_rtk else None
     )
 
     # 初始化坐标系对齐
