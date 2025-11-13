@@ -6,6 +6,7 @@
 	<arg name="map" default="$(find fast_lio)/PCD/default_map/submap_1.pcd" />
 	<arg name="map_base_path" default="$(find fast_lio)/PCD/" />
 	<arg name="map_name" default="default_map" />
+	<arg name="use_rtk" default="false" />
 
 	<!-- fast_lio -->
 	<rosparam command="load" file="$(find fast_lio_localization)/config/mid360.yaml" />
@@ -23,7 +24,9 @@
 
 
 	<!-- loalization-->
-	<node pkg="fast_lio_localization" type="global_localization.py" name="global_localization" output="screen" />
+	<node pkg="fast_lio_localization" type="global_localization.py" name="global_localization" output="screen">
+		<param name="~use_rtk" value="$(arg use_rtk)" />
+	</node>
 
 	<!-- transform  fusion-->
 	<node pkg="fast_lio_localization" type="transform_fusion.py" name="transform_fusion" output="screen" />

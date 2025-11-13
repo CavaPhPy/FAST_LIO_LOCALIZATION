@@ -225,6 +225,57 @@ def initialize_global_map_with_rtk(rtk_data):
         rospy.logwarn('Failed to initialize global map')
         return False
 
+
+def initialize_global_map_with_pose(pose_msg):
+    """
+    根据给定的位姿信息，通过AABB盒选择并加载对应的子地图
+    """
+    global global_map, submap_manager, current_submaps
+    
+    # 从pose_msg中提取位置信息
+    position = pose_msg.pose.pose.position
+    x, y = position.x, position.y
+    
+    # 根据AABB包围盒筛选候选子地图
+    candidates = []
+    for metadata in submap_manager.submaps_metadata:
+        if (metadata.aabb_min[0] <= x <= metadata.aabb_max[0] and
+            metadata.aabb_min[1] <= y <= metadata.aabb_max[1]):
+            candidates.append(metadata)
+    
+    if not candidates:
+        rospy.logwarn("No candidate submaps found for position: ({}, {})".format(x, y))
+        return False
+
+    # 保存当前加载的子地图信息
+    current_submaps = candidates
+    
+    # 加载候选子地图并合并
+    global_map = o3d.geometry.PointCloud()
+    for candidate in candidates:
+        pcd_file = os.path.join(submap_manager.map_directory, candidate.file_path)
+        if os.path.exists(pcd_file):
+            try:
+                submap = o3d.io.read_point_cloud(pcd_file)
+                global_map += submap
+                rospy.loginfo("Loaded submap: {}".format(pcd_file))
+            except Exception as e:
+                rospy.logwarn("Failed to load submap {}: {}".format(pcd_file, str(e)))
+        else:
+            rospy.logwarn("Submap file not found: {}".format(pcd_file))
+    
+    if len(global_map.points) > 0:
+        # 降采样用于实际匹配计算
+        global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
+        rospy.loginfo('Global map initialized with {} submaps, total points: {}'.format(
+            len(candidates), len(global_map.points)))
+        # 发布当前使用的子地图点云
+        publish_current_submap_points()
+        return True
+    else:
+        rospy.logwarn('Failed to initialize global map')
+        return False
+
 # 发布当前使用的子地图点云
 def publish_current_submap_points():
     global pub_global_map, global_map
@@ -256,27 +307,61 @@ def get_current_rtk_data():
 
 # 智能定位
 def smart_global_localization():
-    global global_map, cur_scan, cur_odom, T_map_to_odom, submap_manager
+    global global_map, cur_scan, cur_odom, T_map_to_odom, submap_manager, use_rtk
     
-    # 获取当前RTK位置
-    current_rtk_data = get_current_rtk_data()
-    if current_rtk_data is None:
-        rospy.logwarn("No current RTK data available")
-        return False
-        
-    # 获取候选子地图
-    candidates = submap_manager.get_candidate_submaps(current_rtk_data)
+    # 如果启用RTK，则使用RTK数据获取候选子地图
+    if use_rtk:
+        # 获取当前RTK位置
+        current_rtk_data = get_current_rtk_data()
+        if current_rtk_data is None:
+            rospy.logwarn("No current RTK data available")
+            return False
+            
+        # 获取候选子地图
+        candidates = submap_manager.get_candidate_submaps(current_rtk_data)
 
-    # 检查是否需要更新地图（当候选子地图与当前加载的子地图不同时）
-    if set([c.file_path for c in candidates]) != set([c.file_path for c in current_submaps]):
-        rospy.loginfo("Updating map with new submaps")
-        # 更新全局地图
-        if not initialize_global_map_with_rtk(current_rtk_data):
-            rospy.logwarn("Failed to update global map")
-            # 如果更新失败，继续使用现有地图进行定位
-            return global_localization(T_map_to_odom)
-        return True
-    
+        # 检查是否需要更新地图（当候选子地图与当前加载的子地图不同时）
+        if set([c.file_path for c in candidates]) != set([c.file_path for c in current_submaps]):
+            rospy.loginfo("Updating map with new submaps")
+            # 更新全局地图
+            if not initialize_global_map_with_rtk(current_rtk_data):
+                rospy.logwarn("Failed to update global map")
+                # 如果更新失败，继续使用现有地图进行定位
+                return global_localization(T_map_to_odom)
+            return True
+    else:
+        # 如果未启用RTK，则使用当前位姿获取候选子地图
+        if cur_odom is None:
+            rospy.logwarn("No current odometry data available")
+            return False
+            
+        # 创建一个临时的PoseWithCovarianceStamped消息用于调用initialize_global_map_with_pose
+        temp_pose_msg = PoseWithCovarianceStamped()
+        temp_pose_msg.header.stamp = rospy.Time.now()
+        temp_pose_msg.header.frame_id = 'map'
+        temp_pose_msg.pose.pose = cur_odom.pose.pose
+        
+        # 获取候选子地图（基于当前位置）
+        x = cur_odom.pose.pose.position.x
+        y = cur_odom.pose.pose.position.y
+        
+        # 根据AABB包围盒筛选候选子地图
+        candidates = []
+        for metadata in submap_manager.submaps_metadata:
+            if (metadata.aabb_min[0] <= x <= metadata.aabb_max[0] and
+                metadata.aabb_min[1] <= y <= metadata.aabb_max[1]):
+                candidates.append(metadata)
+
+        # 检查是否需要更新地图（当候选子地图与当前加载的子地图不同时）
+        if set([c.file_path for c in candidates]) != set([c.file_path for c in current_submaps]):
+            rospy.loginfo("Updating map with new submaps based on odometry")
+            # 更新全局地图
+            if not initialize_global_map_with_pose(temp_pose_msg):
+                rospy.logwarn("Failed to update global map")
+                # 如果更新失败，继续使用现有地图进行定位
+                return global_localization(T_map_to_odom)
+            return True
+
     # 首先尝试候选子地图
     rospy.loginfo("Trying candidate submaps: {}".format(len(candidates)))
     if try_localization_with_submaps(candidates):
@@ -435,6 +520,9 @@ if __name__ == '__main__':
     rospy.init_node('fast_lio_localization')
     rospy.loginfo('Localization Node Inited...')
 
+    # 检查是否启用RTK模式
+    use_rtk = rospy.get_param('~use_rtk', True)
+
     # 初始化SubmapManager
     rospack = rospkg.RosPack()
     try:
@@ -456,90 +544,115 @@ if __name__ == '__main__':
 
     rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)
     rospy.Subscriber('/Odometry', Odometry, cb_save_cur_odom, queue_size=1)
-    # RTK订阅
-    rospy.Subscriber('/rtk_data', RTKData, cb_rtk_data, queue_size=1)
+    # RTK订阅 (只有在启用RTK时才订阅)
+    if use_rtk:
+        rospy.Subscriber('/rtk_data', RTKData, cb_rtk_data, queue_size=1)
 
     # 初始化全局地图（现在取消全局地图方式的初始化）
     # rospy.logwarn('Waiting for global map......')
     # initialize_global_map(rospy.wait_for_message('/map', PointCloud2))
 
 
-    # 实例化转换器（注意这里面有个T_RTK_TO_BASELINK_OFFSET需要根据实际情况修改！！！）
-    global rtk_converter
-    rtk_converter = RTKConverter()
+    # 如果启用了RTK模式，则执行RTK初始化流程
+    if use_rtk:
+        # 实例化转换器（注意这里面有个T_RTK_TO_BASELINK_OFFSET需要根据实际情况修改！！！）
+        global rtk_converter
+        rtk_converter = RTKConverter()
 
-    # 在上方SubmapManager初始化的时候，理论上origin_rtk就有值了。
-    map_origin_rtk = submap_manager.origin_rtk
-    if not map_origin_rtk:
-        rospy.logwarn("No origin RTK data available")
-        exit(1)
+        # 在上方SubmapManager初始化的时候，理论上origin_rtk就有值了。
+        map_origin_rtk = submap_manager.origin_rtk
+        if not map_origin_rtk:
+            rospy.logwarn("No origin RTK data available")
+            exit(1)
 
-    RTK_START_DATA = ConvertRTKData(
-        lat=map_origin_rtk['latitude'],
-        lon=map_origin_rtk['longitude'],
-        alt=map_origin_rtk['altitude'],
-        hdg=map_origin_rtk['heading'],
-        pit=map_origin_rtk['pitch'],
-        rol=map_origin_rtk['roll'],
-        world_map_pos=[
-            map_origin_rtk['world_map']['position']['x'],
-            map_origin_rtk['world_map']['position']['y'],
-            map_origin_rtk['world_map']['position']['z']
-        ] if 'world_map' in map_origin_rtk else None,
-        world_map_quat=[
-            map_origin_rtk['world_map']['orientation']['x'],
-            map_origin_rtk['world_map']['orientation']['y'],
-            map_origin_rtk['world_map']['orientation']['z'],
-            map_origin_rtk['world_map']['orientation']['w']
-        ] if 'world_map' in map_origin_rtk else None
-    )
+        RTK_START_DATA = ConvertRTKData(
+            lat=map_origin_rtk['latitude'],
+            lon=map_origin_rtk['longitude'],
+            alt=map_origin_rtk['altitude'],
+            hdg=map_origin_rtk['heading'],
+            pit=map_origin_rtk['pitch'],
+            rol=map_origin_rtk['roll'],
+            world_map_pos=[
+                map_origin_rtk['world_map']['position']['x'],
+                map_origin_rtk['world_map']['position']['y'],
+                map_origin_rtk['world_map']['position']['z']
+            ] if 'world_map' in map_origin_rtk else None,
+            world_map_quat=[
+                map_origin_rtk['world_map']['orientation']['x'],
+                map_origin_rtk['world_map']['orientation']['y'],
+                map_origin_rtk['world_map']['orientation']['z'],
+                map_origin_rtk['world_map']['orientation']['w']
+            ] if 'world_map' in map_origin_rtk else None
+        )
 
-    # 初始化坐标系对齐
-    rtk_converter.initialize_alignment(RTK_START_DATA)
-    rospy.loginfo("转换器已初始化。地理坐标系已对齐到世界坐标系。")
+        # 初始化坐标系对齐
+        rtk_converter.initialize_alignment(RTK_START_DATA)
+        rospy.loginfo("转换器已初始化。地理坐标系已对齐到世界坐标系。")
 
 
-    # 等待RTK数据并初始化地图 (设置超时)
-    rospy.logwarn('Waiting for RTK data to initialize global map...')
-    rtk_initialized = False
-    start_time = time.time()
-    timeout = 30.0  # 30秒超时
-    
-    while not rtk_initialized and not rospy.is_shutdown() and (time.time() - start_time) < timeout:
-        rtk_data = get_current_rtk_data()
-        if rtk_data is not None:
-            if initialize_global_map_with_rtk(rtk_data):
-                rtk_initialized = True
-                break
-        rospy.sleep(0.1)
-        rospy.loginfo_throttle(5, "Waiting for RTK data...")
+        # 等待RTK数据并初始化地图 (设置超时)
+        rospy.logwarn('Waiting for RTK data to initialize global map...')
+        rtk_initialized = False
+        start_time = time.time()
+        timeout = 30.0  # 30秒超时
+        
+        while not rtk_initialized and not rospy.is_shutdown() and (time.time() - start_time) < timeout:
+            rtk_data = get_current_rtk_data()
+            if rtk_data is not None:
+                if initialize_global_map_with_rtk(rtk_data):
+                    rtk_initialized = True
+                    break
+            rospy.sleep(0.1)
+            rospy.loginfo_throttle(5, "Waiting for RTK data...")
 
-    if not rtk_initialized:
-        rospy.logerr("Failed to initialize with RTK data within timeout")
-        exit(1)
+        if not rtk_initialized:
+            rospy.logerr("Failed to initialize with RTK data within timeout")
+            exit(1)
 
-    # 初始化
-    attempt_count = 0
-    max_attempts = 300  # 最大尝试次数，避免无限循环
-    while not initialized:
-        rospy.logwarn(f'Waiting for initial pose.... (Attempt {attempt_count + 1}/{max_attempts})')
+        # 初始化
+        attempt_count = 0
+        max_attempts = 300  # 最大尝试次数，避免无限循环
+        while not initialized:
+            rospy.logwarn(f'Waiting for initial pose.... (Attempt {attempt_count + 1}/{max_attempts})')
 
-        # 每次循环都发送基于最新RTK数据的初始位姿
-        if send_initial_pose_from_rtk():
-            rospy.loginfo("Successfully sent initial pose based on RTK coordinates")
-        else:
-            rospy.logwarn("Failed to send initial pose from RTK, will retry")
+            # 每次循环都发送基于最新RTK数据的初始位姿
+            if send_initial_pose_from_rtk():
+                rospy.loginfo("Successfully sent initial pose based on RTK coordinates")
+            else:
+                rospy.logwarn("Failed to send initial pose from RTK, will retry")
 
-        # 等待初始位姿
-        pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
-        initial_pose = pose_to_mat(pose_msg)
-        if cur_scan:
-            initialized = global_localization(initial_pose)
-            if not initialized:
+            # 等待初始位姿
+            pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
+            initial_pose = pose_to_mat(pose_msg)
+            if cur_scan:
+                initialized = global_localization(initial_pose)
+                if not initialized:
+                    attempt_count += 1
+            else:
+                rospy.logwarn('First scan not received!!!!!')
                 attempt_count += 1
-        else:
-            rospy.logwarn('First scan not received!!!!!')
-            attempt_count += 1
+    
+    else:
+        # 不使用RTK的传统模式
+        rospy.loginfo("Running in traditional mode without RTK")
+        
+        # 初始化
+        initialized = False
+        while not initialized:
+            rospy.logwarn('Waiting for initial pose....')
+
+            # 等待初始位姿
+            pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
+            
+            # 根据初始位姿加载对应的子地图
+            if initialize_global_map_with_pose(pose_msg):
+                initial_pose = pose_to_mat(pose_msg)
+                if cur_scan:
+                    initialized = global_localization(initial_pose)
+                else:
+                    rospy.logwarn('First scan not received!!!!!')
+            else:
+                rospy.logwarn('Failed to initialize map with given pose, waiting for new pose...')
 
     rospy.loginfo('')
     rospy.loginfo('Initialize successfully!!!!!!')
