@@ -160,6 +160,7 @@ def global_localization(pose_estimation):
         map_to_odom.header.stamp = cur_odom.header.stamp
         map_to_odom.header.frame_id = 'map'
         pub_map_to_odom.publish(map_to_odom)
+        rospy.logwarn('fitness score:{}'.format(fitness))
         return True
     else:
         rospy.logwarn('Not match!!!!')
@@ -500,6 +501,103 @@ def send_initial_pose(x, y, z, roll, pitch, yaw):
     # 确保消息被发送
     rospy.sleep(0.1)
 
+def global_localization_360(initial_pose_xyz):
+    """
+    360度采样搜索
+    仅在初始化阶段调用，尝试所有可能的角度
+    initial_pose_xyz: 传入的初始位姿矩阵，会保留其位置信息，只搜索旋转角度
+    """
+    global global_map, cur_scan, cur_odom, T_map_to_odom
+    
+    best_fitness = -1.0
+    best_pose = None
+    
+    # 定义搜索步长，建议 20-30 度
+    degree_step = 20
+    angles = np.arange(0, 360, degree_step)
+
+    # 提取初始位姿的旋转和平移
+    initial_rotation = initial_pose_xyz[:3, :3].copy()
+    initial_translation = initial_pose_xyz[:3, 3].copy()
+    
+    rospy.loginfo("Starting 360-degree global search, degree step: {}, "
+                  "base rotation: {:.2f} deg around Z-axis, pos: [{:.2f}, {:.2f}, {:.2f}]"
+                  .format(degree_step, 
+                          np.rad2deg(np.arctan2(initial_rotation[1, 0], initial_rotation[0, 0])),
+                          initial_translation[0], 
+                          initial_translation[1], 
+                          initial_translation[2]))
+    
+    # 确保有有效的扫描数据
+    if cur_scan is None:
+        rospy.logerr("No scan data available for global localization 360!")
+        return False, None
+    
+    # 正式开始360度采样搜索
+    for angle in angles:
+        # 1. 构造该角度下的初始矩阵（在初始旋转基础上叠加角度）
+        rad = np.deg2rad(angle)
+        # 创建绕Z轴的增量旋转矩阵
+        delta_R = tf.transformations.rotation_matrix(rad, (0, 0, 1))[:3, :3]
+        
+        # 在基础旋转上叠加搜索角度
+        test_rotation = np.dot(initial_rotation, delta_R)
+        
+        # 创建测试位姿：保持原始位置，应用复合旋转
+        test_pose = np.eye(4)
+        test_pose[:3, :3] = test_rotation
+        test_pose[:3, 3] = initial_translation  # 保持原始位置
+        
+        # 2. 调用现有的 ICP/NDT 配准逻辑
+        # TODO 这里注意线程安全
+        scan_tobe_mapped = copy.copy(cur_scan)
+
+        tic = time.time()
+        global_map_in_FOV = crop_global_map_in_FOV(global_map, test_pose, cur_odom)
+        # 粗配准
+        result_pose, _ = registration_at_scale(scan_tobe_mapped, global_map_in_FOV, initial=test_pose, scale=5)
+        # 精配准
+        result_pose, fitness = registration_at_scale(scan_tobe_mapped, global_map_in_FOV, initial=test_pose, scale=1)
+        toc = time.time()
+
+        # 计算当前总旋转角度用于显示
+        current_total_yaw = np.rad2deg(np.arctan2(test_rotation[1, 0], test_rotation[0, 0]))
+        rospy.loginfo(f"Testing Total Yaw {current_total_yaw:.2f}° (Offset: {angle}°): "
+                     f"Fitness Score = {fitness:.4f}, Time = {toc - tic:.3f}s, Scan points: {len(scan_tobe_mapped.points)}")
+
+        if fitness > best_fitness:
+            best_fitness = fitness
+            best_pose = result_pose
+
+    # 设置一个置信度阈值。如果最好的匹配得分都很低，说明可能不在原点附近
+    if best_fitness > LOCALIZATION_TH: # 这个阈值需要根据实际环境调试
+        rospy.loginfo(f"Global initialization success! Best Fitness: {best_fitness}")
+        return True, best_pose
+    else:
+        rospy.logwarn("360 search failed: No orientation matched the map well.")
+        return False, None
+
+def create_default_pose_message():
+    """
+    创建默认位姿消息 (0,0,0,0,0,0)
+    """
+    # 默认位姿: x=0, y=0, z=0, roll=0, pitch=0, yaw=0
+    default_pose = PoseWithCovarianceStamped()
+    default_pose.header.stamp = rospy.Time.now()
+    default_pose.header.frame_id = 'map'
+    
+    # 设置位置 (x, y, z) = (0, 0, 0)
+    default_pose.pose.pose.position = Point(0.0, 0.0, 0.0)
+    
+    # 设置方向 (roll, pitch, yaw) = (0, 0, 0)
+    # 当欧拉角为 (0, 0, 0) 时，四元数为 (0, 0, 0, 1)
+    default_pose.pose.pose.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+    
+    # 可选：设置协方差矩阵（全零或默认值）
+    default_pose.pose.covariance = [0.0] * 36  # 6x6 协方差矩阵展平
+    
+    return default_pose
+
 if __name__ == '__main__':
     MAP_VOXEL_SIZE = 0.4
     SCAN_VOXEL_SIZE = 0.1
@@ -522,6 +620,9 @@ if __name__ == '__main__':
 
     # 检查是否启用RTK模式
     use_rtk = rospy.get_param('~use_rtk', True)
+
+    # 检查是否手动初始化位姿
+    manual_init_pose = rospy.get_param('~manual_init_pose', False)
 
     # 初始化SubmapManager
     rospack = rospkg.RosPack()
@@ -639,20 +740,31 @@ if __name__ == '__main__':
         # 初始化
         initialized = False
         while not initialized:
-            rospy.logwarn('Waiting for initial pose....')
 
             # 等待初始位姿
-            pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
+            if (manual_init_pose):
+                pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
+                rospy.logwarn("Using manual initial pose, Waiting for initial pose....")
+            else:
+                # 自动初始化：使用默认位姿 (0,0,0,0,0,0)
+                pose_msg = create_default_pose_message()
+                rospy.logwarn("Using automatic initial pose, loop initial pose....")
             
             # 根据初始位姿加载对应的子地图
             if initialize_global_map_with_pose(pose_msg):
                 initial_pose = pose_to_mat(pose_msg)
                 if cur_scan:
-                    initialized = global_localization(initial_pose)
+                    # initialized = global_localization(initial_pose)
+                    initialized, final_map_to_odom = global_localization_360(initial_pose)
+                    if initialized:
+                        T_map_to_odom = final_map_to_odom
                 else:
                     rospy.logwarn('First scan not received!!!!!')
             else:
                 rospy.logwarn('Failed to initialize map with given pose, waiting for new pose...')
+                if not manual_init_pose:
+                    rospy.logwarn('automatic init pose failed, sleeping for 1s...')
+                    rospy.sleep(3)
 
     rospy.loginfo('')
     rospy.loginfo('Initialize successfully!!!!!!')
