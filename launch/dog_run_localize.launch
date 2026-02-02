@@ -9,7 +9,8 @@
 	<arg name="use_rtk" default="false" />
 
 	<!-- fast_lio -->
-	<rosparam command="load" file="$(find fast_lio_localization)/config/mid360.yaml" />
+	<!-- <rosparam command="load" file="$(find fast_lio_localization)/config/mid360_dog_run.yaml" /> -->
+	<rosparam command="load" file="$(find fast_lio_localization)/config/robosense_airy_dog_run.yaml" />
 	<param name="feature_extract_enable" type="bool" value="0"/>
 	<param name="point_filter_num" type="int" value="3"/>
 	<param name="max_iteration" type="int" value="3" />
@@ -17,7 +18,7 @@
 	<param name="filter_size_map" type="double" value="0.5" />
 	<param name="cube_side_length" type="double" value="1000" />
 	<param name="runtime_pos_log_enable" type="bool" value="0" />
-	<param name="pcd_save_en" type="bool" value="false"/>
+	<param name="pcd_save/pcd_save_en" type="bool" value="false"/>
 	<param name="map_base_path" type="string" value="$(arg map_base_path)"/>
 	<param name="map_name" type="string" value="$(arg map_name)"/>
 	<node pkg="fast_lio" type="fastlio_mapping" name="laserMapping" output="screen" />

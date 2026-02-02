@@ -8,7 +8,8 @@
 	<arg name="map_name" default="default_map" />
 
 	<!-- fast_lio -->
-	<rosparam command="load" file="$(find fast_lio)/config/mid360.yaml" />
+	<!-- <rosparam command="load" file="$(find fast_lio)/config/mid360_dog_run.yaml" /> -->
+	<rosparam command="load" file="$(find fast_lio)/config/robosense_airy_dog_run.yaml" />
 	<param name="feature_extract_enable" type="bool" value="0"/>
 	<param name="point_filter_num" type="int" value="3"/>
 	<param name="max_iteration" type="int" value="3" />
@@ -21,7 +22,7 @@
 	<!-- 是否存储PCD地图 -->
 	<param name="pcd_save/pcd_save_en" value="true" />
 	<!-- 如果存储地图，多少帧保存一次，MID360默认10Hz，即1s获得10帧，-1为保存为一个文件（不推荐） -->
-	<param name="pcd_save/interval" value="50" />
+	<param name="pcd_save/interval" value="-1" />
 	<!-- 地图保存的基本路径 -->
 	<param name="map_base_path" value="$(find fast_lio)/PCD/" />
 	<!-- 地图名称（也就是存储地图的文件夹名称） -->
@@ -40,9 +41,9 @@
 	</include>
 
 	<!-- 发布一个雷达body到机器人足端body_foot的静态映射 -->
-	<node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_1" args="-0.10 -0.11 0 0 0 0 body body_foot" />
+	<node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_1" args="0 0 0 0 0 0 body body_foot" />
 	<!-- 发布一个雷达初始位置camera_init到机器人足端初始位置body_init的静态映射 -->
-	<node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_2" args="-0.10 -0.11 0 0 0 0 camera_init robot_foot_init" />
+	<node pkg="tf2_ros" type="static_transform_publisher" name="tf_pub_2" args="0 0 0 0 0 0 camera_init robot_foot_init" />
 
 	<!-- 在其他节点声明之后添加 -->
 	<!-- 如果需要，可以添加静态变换从gps到body -->

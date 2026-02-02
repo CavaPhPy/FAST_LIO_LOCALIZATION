@@ -587,7 +587,7 @@ def create_default_pose_message():
     default_pose.header.frame_id = 'map'
     
     # 设置位置 (x, y, z) = (0, 0, 0)
-    default_pose.pose.pose.position = Point(0.0, 0.0, 0.0)
+    default_pose.pose.pose.position = Point(0.0, 0.0, -1.0)
     
     # 设置方向 (roll, pitch, yaw) = (0, 0, 0)
     # 当欧拉角为 (0, 0, 0) 时，四元数为 (0, 0, 0, 1)
@@ -763,7 +763,7 @@ if __name__ == '__main__':
             else:
                 rospy.logwarn('Failed to initialize map with given pose, waiting for new pose...')
                 if not manual_init_pose:
-                    rospy.logwarn('automatic init pose failed, sleeping for 1s...')
+                    rospy.logwarn('automatic init pose failed, sleeping for 3s...')
                     rospy.sleep(3)
 
     rospy.loginfo('')

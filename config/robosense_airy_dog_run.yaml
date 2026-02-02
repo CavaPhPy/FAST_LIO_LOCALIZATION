@@ -1,0 +1,36 @@
+common:
+    lid_topic:  "/rslidar_points"
+    imu_topic:  "/rslidar_imu_data"
+    time_sync_en: false                                     # 仅当无法进行外部时间同步时才启用
+    time_offset_lidar_to_imu: 0.0                           # 激光雷达和IMU之间的时间偏移，可通过其他算法（例如LI-Init）
+                                                            # 此参数无论time_sync_en为何值都会生效。如果时间偏移未知，请设置为0.0
+
+preprocess:
+    lidar_type: 5                                           # 1 表示 Livox 系列激光雷达，2 表示 Velodyne 激光雷达，3 表示 Ouster 激光雷达，4 表示 MARSIM，5 表示 RoboSense 激光雷达
+    scan_line: 96
+    scan_rate: 10                                           # 仅需为Velodyne设置，单位：Hz
+    timestamp_unit: 0                                       # PointCloud2 rostopic中时间字段的单位：0-秒，1-毫秒，2-微秒，3-纳秒
+    blind: 2
+
+mapping:
+    acc_cov: 0.1                                            # 加速度计的协方差
+    gyr_cov: 0.1                                            # 陀螺仪的协方差
+    b_acc_cov: 0.0001                                       # 加速度计偏置的协方差
+    b_gyr_cov: 0.0001                                       # 陀螺仪偏置的协方差
+    fov_degree:    360                                      # 视场角，单位：度
+    det_range:     100.0                                    # 检测范围，单位：米
+    extrinsic_est_en:  false                                # 激光雷达外参的在线估计，true：表示算法会动态调整IMU和激光雷达之间的外参；false 则使用静态外参
+    extrinsic_Q: [0, 0, 0, 0]                               # qx,qy,qz,qw，四元数的四个分量表示旋转外参，当下方旋转矩阵设为全0或未设置时，使用四元数转换
+    extrinsic_T: [0, 0, 0]                                  # 激光雷达相对于IMU的外参平移          !!注意!!*每台激光雷达设备的外参都是独立特有的，需根据实际设备进行配置*
+    extrinsic_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+publish:
+    path_en:  false               # 是否发布路径
+    scan_publish_en:  true        # false: 关闭所有点云输出
+    dense_publish_en: true        # false: 在全局框架点云扫描中减少点的数量
+    scan_bodyframe_pub_en: true   # true: 以IMU机体坐标系输出点云扫描
+
+pcd_save:
+    pcd_save_en: false            # 是否启用点云保存
+    interval: -1                  # 每个PCD文件保存的激光雷达帧数；
+                                  # -1：所有帧保存在一个PCD文件中，如果帧数过多可能导致内存崩溃
